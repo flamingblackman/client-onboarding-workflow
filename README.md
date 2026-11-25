@@ -105,6 +105,23 @@ Real bugs, caught live, fixed the same day:
 - **The case of the empty `namedValues`.** The first live trigger run arrived with `e.namedValues` empty: the Sheet row landed with timestamp + Status New and every other field blank, the alert went out with all fields blank, and the welcome email never sent (no recipient). The script now falls back to `e.response.getItemResponses()` for any missing title, with `responseValueString` normalizing date answers to `yyyy-mm-dd`. Verified on the second live run: full row, full alert, welcome sent.
 - **The rows that ran away to 999.** A column-wide ARRAYFORMULA in K breaks appends: it extends the data range, so new rows landed at rows 999–1000 and the log looked empty at the top. The ARRAYFORMULA was cleared and Step 1 now writes a per-row formula in K at append time. Never use a column-wide ARRAYFORMULA in K again.
 
+## 🔍 QA — Errors Found and Fixed (Nov 24, 2026)
+
+The build was put through an intensive QA pass before it was called done. Four independent reviewers checked the script, the Sheet formulas, the portal demo, and the docs. That pass found 32 defects: 1 blocker, 17 major, 14 minor. Three more reviewers (Claude, ChatGPT, Gemini) gave second opinions on the fixes. Everything found was fixed in the stabilization patch, and the fixes were verified before the build went live.
+
+What was found and fixed:
+
+- **Formula injection (high).** A client name starting with `=` (or `+`, `-`, `@`) would have been evaluated as a spreadsheet formula. The script now prefixes those values with a single quote before writing them. Verified live: a name of `=2+2` stays as text, it does not become 4.
+- **Evening timestamps read as the next day (high).** The Sheet's timezone setting said Eastern but was running UTC underneath, so an 8 PM intake displayed as 1 AM the next day. The Sheet timezone was re-set in File > Settings so Eastern actually takes effect, and the script normalizes timestamps to Eastern before writing. Verified live: a 9:08 PM submit reads 9:08 PM.
+- **Re-contact wiped the wrong thing (blocker).** Flipping a row back to Contacted after it was Onboarded could leave a stale close-out note and skip re-stamping the follow-up date. The handler now strips the machine note and re-stamps both dates on re-contact. Verified live across three transition sequences.
+- **Two status handlers racing.** Flipping Contacted to Onboarded quickly could let a delayed Step 2 write land after Step 3 cleared the follow-up date. Both handlers now share a script lock.
+- **Send failures were swallowed.** If the alert or welcome email failed, the script only logged it and carried on. Failures are now flagged in Notes (appended, never overwriting a hand-written note) and the run rethrows so the failure is visible.
+- **Date parsing in the digest.** The overdue digest could misread date-only strings and serials as UTC instants. It now parses them as Eastern calendar dates.
+- **Dedup too strict.** The duplicate check used an exact timestamp match, which a Sheets round trip could miss by a millisecond. It now allows a 1-second tolerance. A re-submit minutes later is still a new row by design.
+- **SLA formula and close-out matcher.** The per-row SLA formula is now a nested IF so a blank or text Timestamp reads blank instead of erroring. The close-out note matcher now tests the full sentence, so a hand-written note that happens to contain the word "Onboarded" no longer blocks the close-out.
+
+Verification: 51 automated tests (Node, stubbing the Apps Script globals) all pass. Live Step 1 regression passed (normal, invalid email, formula injection, ET timestamp). Status-transition tests passed on all three sequences. A final live QA pass (Sheet formulas, portal demo, triggers) passed every item. Full detail, including the defect list and the three second-opinion reviews, is in `qa-intensive-2026-11-24.md`. The automated checks live in `verify-apps-script.js`.
+
 ## 📦 Sample Payload
 
 See `sample-payloads/intake.json` for an anonymized example of one intake as Step 1 writes it to the log. The sample matches the log schema exactly (plus a `note` metadata field).
